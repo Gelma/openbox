@@ -66,6 +66,9 @@ guint   config_desktops_num;
 GSList *config_desktops_names;
 guint   config_screen_firstdesk;
 guint   config_desktop_popup_time;
+ObDesktopLayout config_desktops_layout;
+gboolean config_desktops_layout_set;
+gboolean config_desktops_layout_respect_pager;
 
 gboolean         config_resize_redraw;
 gint             config_resize_popup_show;
@@ -803,11 +806,78 @@ static void parse_theme(xmlNodePtr node, gpointer d)
     }
 }
 
+static void parse_desktop_layout(xmlNodePtr node)
+{
+    xmlNodePtr n;
+
+    config_desktops_layout.orientation = OB_ORIENTATION_HORZ;
+    config_desktops_layout.start_corner = OB_CORNER_TOPLEFT;
+    config_desktops_layout.rows = 0;
+    config_desktops_layout.columns = 0;
+    config_desktops_layout_set = FALSE;
+    config_desktops_layout_respect_pager = FALSE;
+
+    obt_xml_attr_bool(node, "respectPager",
+                      &config_desktops_layout_respect_pager);
+
+    if ((n = obt_xml_find_node(node->children, "orientation"))) {
+        gchar *s = obt_xml_node_string(n);
+
+        if (s) {
+            if (!g_ascii_strcasecmp(s, "vertical"))
+                config_desktops_layout.orientation = OB_ORIENTATION_VERT;
+            else if (!g_ascii_strcasecmp(s, "horizontal"))
+                config_desktops_layout.orientation = OB_ORIENTATION_HORZ;
+            else
+                g_message("Invalid desktop layout orientation \"%s\"", s);
+            g_free(s);
+        }
+    }
+    if ((n = obt_xml_find_node(node->children, "columns"))) {
+        gint v = obt_xml_node_int(n);
+
+        if (v > 0) {
+            config_desktops_layout.columns = (guint)v;
+            config_desktops_layout_set = TRUE;
+        }
+    }
+    if ((n = obt_xml_find_node(node->children, "rows"))) {
+        gint v = obt_xml_node_int(n);
+
+        if (v > 0) {
+            config_desktops_layout.rows = (guint)v;
+            config_desktops_layout_set = TRUE;
+        }
+    }
+    if ((n = obt_xml_find_node(node->children, "startingCorner"))) {
+        gchar *s = obt_xml_node_string(n);
+
+        if (s) {
+            if (!g_ascii_strcasecmp(s, "top-right"))
+                config_desktops_layout.start_corner = OB_CORNER_TOPRIGHT;
+            else if (!g_ascii_strcasecmp(s, "bottom-left"))
+                config_desktops_layout.start_corner = OB_CORNER_BOTTOMLEFT;
+            else if (!g_ascii_strcasecmp(s, "bottom-right"))
+                config_desktops_layout.start_corner = OB_CORNER_BOTTOMRIGHT;
+            else if (!g_ascii_strcasecmp(s, "top-left"))
+                config_desktops_layout.start_corner = OB_CORNER_TOPLEFT;
+            else
+                g_message("Invalid desktop layout startingCorner \"%s\"", s);
+            g_free(s);
+        }
+    }
+}
+
 static void parse_desktops(xmlNodePtr node, gpointer d)
 {
     xmlNodePtr n;
 
     node = node->children;
+
+    config_desktops_layout_set = FALSE;
+    config_desktops_layout_respect_pager = FALSE;
+    if ((n = obt_xml_find_node(node, "layout")))
+        parse_desktop_layout(n);
 
     if ((n = obt_xml_find_node(node, "number"))) {
         gint d = obt_xml_node_int(n);
@@ -1142,6 +1212,12 @@ void config_startup(ObtXmlInst *i)
     config_screen_firstdesk = 1;
     config_desktops_names = NULL;
     config_desktop_popup_time = 875;
+    config_desktops_layout.orientation = OB_ORIENTATION_HORZ;
+    config_desktops_layout.start_corner = OB_CORNER_TOPLEFT;
+    config_desktops_layout.rows = 0;
+    config_desktops_layout.columns = 0;
+    config_desktops_layout_set = FALSE;
+    config_desktops_layout_respect_pager = FALSE;
 
     obt_xml_register(i, "desktops", parse_desktops, NULL);
 

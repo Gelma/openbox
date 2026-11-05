@@ -1097,87 +1097,132 @@ guint screen_find_desktop(guint from, ObDirection dir,
 
 static gboolean screen_validate_layout(ObDesktopLayout *l)
 {
-    if (l->columns == 0 && l->rows == 0) /* both 0's is bad data.. */
+    return ob_layout_validate(l, screen_num_desktops);
+}
+
+/*! Read _NET_DESKTOP_LAYOUT into l. Returns FALSE when the property is
+  missing or cannot be parsed. The property is never modified. */
+static gboolean screen_parse_layout_property(ObDesktopLayout *l)
+{
+    guint32 *data;
+    guint num;
+    gboolean ok = FALSE;
+
+    if (!OBT_PROP_GETA32(obt_root(ob_screen),
+                         NET_DESKTOP_LAYOUT, CARDINAL, &data, &num))
         return FALSE;
 
-    /* fill in a zero rows/columns */
-    if (l->columns == 0) {
-        l->columns = screen_num_desktops / l->rows;
-        if (l->rows * l->columns < screen_num_desktops)
-            l->columns++;
-        if (l->rows * l->columns >= screen_num_desktops + l->columns)
-            l->rows--;
-    } else if (l->rows == 0) {
-        l->rows = screen_num_desktops / l->columns;
-        if (l->columns * l->rows < screen_num_desktops)
-            l->rows++;
-        if (l->columns * l->rows >= screen_num_desktops + l->rows)
-            l->columns--;
+    if (num == 3 || num == 4) {
+        if (data[0] == OBT_PROP_ATOM(NET_WM_ORIENTATION_VERT))
+            l->orientation = OB_ORIENTATION_VERT;
+        else if (data[0] == OBT_PROP_ATOM(NET_WM_ORIENTATION_HORZ))
+            l->orientation = OB_ORIENTATION_HORZ;
+        else
+            goto done;
+
+        if (num < 4)
+            l->start_corner = OB_CORNER_TOPLEFT;
+        else {
+            if (data[3] == OBT_PROP_ATOM(NET_WM_TOPLEFT))
+                l->start_corner = OB_CORNER_TOPLEFT;
+            else if (data[3] == OBT_PROP_ATOM(NET_WM_TOPRIGHT))
+                l->start_corner = OB_CORNER_TOPRIGHT;
+            else if (data[3] == OBT_PROP_ATOM(NET_WM_BOTTOMRIGHT))
+                l->start_corner = OB_CORNER_BOTTOMRIGHT;
+            else if (data[3] == OBT_PROP_ATOM(NET_WM_BOTTOMLEFT))
+                l->start_corner = OB_CORNER_BOTTOMLEFT;
+            else
+                goto done;
+        }
+
+        l->columns = data[1];
+        l->rows = data[2];
+        ok = TRUE;
     }
 
-    /* bounds checking */
-    if (l->orientation == OB_ORIENTATION_HORZ) {
-        l->columns = MIN(screen_num_desktops, l->columns);
-        l->rows = MIN(l->rows,
-                      (screen_num_desktops + l->columns - 1) / l->columns);
-        l->columns = screen_num_desktops / l->rows +
-            !!(screen_num_desktops % l->rows);
-    } else {
-        l->rows = MIN(screen_num_desktops, l->rows);
-        l->columns = MIN(l->columns,
-                         (screen_num_desktops + l->rows - 1) / l->rows);
-        l->rows = screen_num_desktops / l->columns +
-            !!(screen_num_desktops % l->columns);
+done:
+    g_free(data);
+    return ok;
+}
+
+/*! Convert a corner to the value used by _NET_DESKTOP_LAYOUT. Note that the
+  EWMH order is top-left, top-right, bottom-right, bottom-left. */
+static gulong screen_layout_start_corner(ObCorner c)
+{
+    switch (c) {
+    case OB_CORNER_TOPLEFT:     return 0;
+    case OB_CORNER_TOPRIGHT:    return 1;
+    case OB_CORNER_BOTTOMRIGHT: return 2;
+    case OB_CORNER_BOTTOMLEFT:  return 3;
     }
-    return TRUE;
+    return 0;
+}
+
+/*! Publish the layout on the root window so pagers and panels agree with it.
+  Nothing is written when the property already holds the same grid. */
+static void screen_publish_layout(const ObDesktopLayout *l)
+{
+    ObDesktopLayout cur;
+    gulong data[4];
+
+    if (screen_parse_layout_property(&cur) && ob_layout_equal(&cur, l))
+        return;
+
+    data[0] = (l->orientation == OB_ORIENTATION_VERT) ?
+        OBT_PROP_ATOM(NET_WM_ORIENTATION_VERT) :
+        OBT_PROP_ATOM(NET_WM_ORIENTATION_HORZ);
+    data[1] = l->columns;
+    data[2] = l->rows;
+    data[3] = screen_layout_start_corner(l->start_corner);
+    OBT_PROP_SETA32(obt_root(ob_screen),
+                    NET_DESKTOP_LAYOUT, CARDINAL, data, 4);
 }
 
 void screen_update_layout(void)
-
 {
-    ObDesktopLayout l;
-    guint32 *data;
-    guint num;
+    ObDesktopLayout prop, cur = screen_desktop_layout;
+    gboolean have_prop, prop_ok, cfg_authoritative;
+    ObLayoutSource source;
 
-    screen_desktop_layout.orientation = OB_ORIENTATION_HORZ;
-    screen_desktop_layout.start_corner = OB_CORNER_TOPLEFT;
-    screen_desktop_layout.rows = 1;
-    screen_desktop_layout.columns = screen_num_desktops;
+    have_prop = screen_parse_layout_property(&prop);
+    prop_ok = have_prop && ob_layout_validate(&prop, screen_num_desktops);
+    cfg_authoritative = config_desktops_layout_set &&
+        !config_desktops_layout_respect_pager;
 
-    if (OBT_PROP_GETA32(obt_root(ob_screen),
-                        NET_DESKTOP_LAYOUT, CARDINAL, &data, &num)) {
-        if (num == 3 || num == 4) {
+    if (!have_prop)
+        ob_debug("desktop layout: _NET_DESKTOP_LAYOUT is not set");
+    else if (!prop_ok)
+        ob_debug("desktop layout: ignoring the _NET_DESKTOP_LAYOUT value");
 
-            if (data[0] == OBT_PROP_ATOM(NET_WM_ORIENTATION_VERT))
-                l.orientation = OB_ORIENTATION_VERT;
-            else if (data[0] == OBT_PROP_ATOM(NET_WM_ORIENTATION_HORZ))
-                l.orientation = OB_ORIENTATION_HORZ;
-            else
-                return;
+    source = ob_layout_resolve(prop_ok ? &prop : NULL,
+                               config_desktops_layout_set ?
+                                   &config_desktops_layout : NULL,
+                               cfg_authoritative,
+                               &cur,
+                               screen_num_desktops,
+                               &screen_desktop_layout);
 
-            if (num < 4)
-                l.start_corner = OB_CORNER_TOPLEFT;
-            else {
-                if (data[3] == OBT_PROP_ATOM(NET_WM_TOPLEFT))
-                    l.start_corner = OB_CORNER_TOPLEFT;
-                else if (data[3] == OBT_PROP_ATOM(NET_WM_TOPRIGHT))
-                    l.start_corner = OB_CORNER_TOPRIGHT;
-                else if (data[3] == OBT_PROP_ATOM(NET_WM_BOTTOMRIGHT))
-                    l.start_corner = OB_CORNER_BOTTOMRIGHT;
-                else if (data[3] == OBT_PROP_ATOM(NET_WM_BOTTOMLEFT))
-                    l.start_corner = OB_CORNER_BOTTOMLEFT;
-                else
-                    return;
-            }
-
-            l.columns = data[1];
-            l.rows = data[2];
-
-            if (screen_validate_layout(&l))
-                screen_desktop_layout = l;
-
-            g_free(data);
-        }
+    switch (source) {
+    case OB_LAYOUT_SOURCE_PROPERTY:
+        ob_debug("desktop layout: using the pager layout (%u rows x %u cols)",
+                 screen_desktop_layout.rows, screen_desktop_layout.columns);
+        break;
+    case OB_LAYOUT_SOURCE_CONFIG:
+        ob_debug("desktop layout: using the config layout (%u rows x %u cols)",
+                 screen_desktop_layout.rows, screen_desktop_layout.columns);
+        screen_publish_layout(&screen_desktop_layout);
+        break;
+    case OB_LAYOUT_SOURCE_CURRENT:
+        ob_debug("desktop layout: keeping the current layout "
+                 "(%u rows x %u cols)",
+                 screen_desktop_layout.rows, screen_desktop_layout.columns);
+        break;
+    case OB_LAYOUT_SOURCE_DEFAULT:
+        ob_debug("desktop layout: no layout available, using one row of %u",
+                 screen_desktop_layout.columns);
+        break;
+    case OB_LAYOUT_SOURCE_NONE:
+        break;
     }
 }
 

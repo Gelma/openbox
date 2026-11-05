@@ -25,6 +25,7 @@
 #include "place.h"
 #include "client.h"
 #include "geom.h"
+#include "layout.h"
 #include "moveresize.h"
 #include "obrender/render.h"
 #include "obt/xml.h"
@@ -178,6 +179,12 @@ extern guint config_screen_firstdesk;
 extern GSList *config_desktops_names;
 /*! Amount of time to show the desktop switch dialog */
 extern guint config_desktop_popup_time;
+/*! The desktop grid from the <layout> tag, zero rows/columns mean automatic */
+extern ObDesktopLayout config_desktops_layout;
+/*! TRUE when rc.xml actually specified a grid */
+extern gboolean config_desktops_layout_set;
+/*! TRUE to let a pager override the configured grid (EWMH behaviour) */
+extern gboolean config_desktops_layout_respect_pager;
 
 /*! The keycode of the key combo which resets the keybaord chains */
 extern guint config_keyboard_reset_keycode;
