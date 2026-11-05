@@ -320,6 +320,10 @@ script si rifiuta di partire se la proprietà manca), registra anche riscritture
 valore, mostra le cancellazioni come `not found`; avvio con `setsid` e arresto con
 `kill -- -PGID` senza processi residui; script validati con `sh -n` e `shellcheck`.
 
+Gli script sono già installati ed eseguibili in `~/openbox-layout-log/watch-layout.sh` e
+`~/openbox-layout-log/stop-watch.sh`; smoke test eseguito sui file installati (rifiuto senza
+proprietà, log di valore iniziale/marker/12×1/cancellazione/4×3, stop senza `xprop` residui).
+
 ---
 
 ## 9. Rischi, compatibilità, domande aperte
