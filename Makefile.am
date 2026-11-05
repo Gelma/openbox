@@ -24,7 +24,8 @@ ACLOCAL_AMFLAGS = -I m4
 INCLUDES = -I.
 
 check_PROGRAMS = \
-	obrender/rendertest
+	obrender/rendertest \
+	openbox/layout_unittest
 
 lib_LTLIBRARIES = \
 	obt/libobt.la \
@@ -275,6 +276,8 @@ openbox_openbox_SOURCES = \
 	openbox/keyboard.h \
 	openbox/keytree.c \
 	openbox/keytree.h \
+	openbox/layout.c \
+	openbox/layout.h \
 	openbox/menuframe.c \
 	openbox/menuframe.h \
 	openbox/menu.c \
@@ -328,6 +331,21 @@ obt_obt_unittests_SOURCES = \
 	obt/unittest_base.h \
 	obt/unittest_base.c \
 	obt/bsearch_unittest.c
+
+## layout_unittest ##
+
+check-local: openbox/layout_unittest
+	./openbox/layout_unittest
+
+openbox_layout_unittest_CPPFLAGS = \
+	$(GLIB_CFLAGS) \
+	-DG_LOG_DOMAIN=\"Openbox-Unittests\"
+openbox_layout_unittest_LDADD = \
+	$(GLIB_LIBS)
+openbox_layout_unittest_SOURCES = \
+	openbox/layout.c \
+	openbox/layout.h \
+	openbox/layout_unittest.c
 
 ## gnome-panel-control ##
 

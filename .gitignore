@@ -107,6 +107,7 @@ tests/wmhints
 data/autostart/openbox-autostart
 data/autostart/autostart
 obrender/rendertest
+openbox/layout_unittest
 obt/tests/bstest
 obt/tests/ddtest
 obt/tests/linktest
