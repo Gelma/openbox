@@ -84,3 +84,58 @@ Hardening + tag <layout> + pubblicazione/ownership + test. Patch completa con bu
 	  4. Nessuna, solo analisi
 	  Mi fermo qui: resta solo il documento aggiornato e committato.
 	    5. Type something...
+
+◆︎ [GelmaRulla] Analisi rivalutata con verifiche reali e fasi F1–F4 implementate, con la policy scelta: la configurazione vince
+ (con respectPager="yes" come valvola EWMH).
+
+Cosa ho corretto nell'analisi precedente
+
+Confermato: il reset incondizionato a 1×N in testa a screen_update_layout() e la reazione a qualunque PropertyNotify (anche delete) sono la causa del collasso. Aggiunte però tre cose che l'analisi non copriva, tutte riprodotte su Xvfb e stato letto via gdb:
+
+- una proprietà malformata (2 elementi, format errato, vuota) produce lo stesso collasso in silenzio;
+- un pager che scrive un layout valido diverso (12×1) vince (sintomo identico, nessun guasto del WM);
+- il buffer della proprietà veniva perso su tutti i return anticipati (g_malloc in obt/prop.c:get_all()).
+
+Correzione importante: openbox --restart non riesegue --startup (verificato: l'argomento viene rimosso da argv e il marker dell'autostart resta a 1 esecuzione), quindi non rilancia lo script Python. Il ripristino osservato dipende da una proprietà ancora valida (stato interno rimasto “latched”) o da un vero riavvio di sessione. Per questo il fix non si appoggia più a nessun autostart.
+
+Cosa ho implementato
+
+- `openbox/layout.h` / `layout.c` (nuovi): ObDesktopLayout, ob_layout_validate() parametrizzata sul numero di desktop, 
+ob_layout_equal(), ob_layout_resolve() pura e testabile. Precedenza: config autoritaria → proprietà EWMH → config come fallback → layout corrente (retention) → 1×N.
+- `screen.c`: la lettura della proprietà non azzera più lo stato; helper screen_parse_layout_property() (libera sempre), 
+screen_publish_layout() (scrive solo se il valore differisce, mappatura EWMH dell'angolo: TL=0, TR=1, BR=2, BL=3) e log ob_debug per assenza/invalidità/fallback.
+- `config.c/h`: parsing di <desktops><layout> con orientation, columns, rows, startingCorner, attributo respectPager; 
+layout_set attivo se c'è almeno righe o colonne.
+- `data/rc.xsd`, `data/rc.xml`, `doc/rc-mouse-focus.xml`, `CHANGELOG`: schema, esempio commentato e documentazione.
+- `openbox/layout_unittest.c` + make check: 18 controlli senza display.
+
+Verifiche
+
+- Build make -j8: nessun warning nuovo. make check: 0 failure.
+- Integrazione su Xvfb privato (-noreset; harness in /tmp/ob-grid-test/, non in git):
+- legacy: delete proprietà → conserva 4×3 (non collassa), pager 12×1 → 12×1, malformata → conserva, nessuna proprietà → 
+1×12 come prima;
+- config 4×3: all'avvio pubblica 0,4,3,0 anche senza proprietà; delete → ripubblica; pager 12×1 o 3×4 → riasserisce 4×3; 
+--reconfigure/--restart → 4×3; cambio conteggio 12→13 → 3×5 pubblicato 0,5,3,0, ritorno a 12 → 4×3;
+- respectPager="yes": il pager vince, e alla cancellazione si torna alla config.
+- Valgrind: nessuna perdita attribuibile al codice nuovo (restano solo leak preesistenti in 
+pangoxft/RrButtonNew/fontconfig).
+
+Commit: 38386220, 69fa8f46, 498ca063, 6ed58704 (quest'ultimo contiene SpecAI.md aggiornato con matrici e stato).
+
+Da sapere
+
+1. Per testnec basta aggiungere a rc.xml (e togliere lo script dall'autostart, ora superfluo):
+   <layout>
+     <orientation>horizontal</orientation>
+     <columns>4</columns>
+     <rows>3</rows>
+     <startingCorner>top-left</startingCorner>
+   </layout>
+2. Rischio aperto: obconf riscrive rc.xml (conosce solo desktops/number, names, popupTime) e potrebbe eliminare <layout> 
+salvando le impostazioni. Non ho potuto verificarlo senza interazione GTK: va provato a mano.
+3. Semantica cambiata solo in meglio anche senza configurazione: la cancellazione della proprietà non distrugge più la 
+griglia; il WM non pubblica nulla in modalità legacy (EWMH intatta).
+4. Non testati: multi-monitor e XSMP (percorso di sessione lasciato invariato).
+
+Se vuole, la procedura in campo con xprop -spy per identificare chi cancellava/riscriveva la proprietà nel setup originale può diventare un file dettagliato fuori dal repo (come per i test Valgrind).
