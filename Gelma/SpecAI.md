@@ -307,12 +307,18 @@ adatto all'upstream.
 
 ### 8.3 Procedura per identificare il colpevole in campo
 
-Da consegnare all'utente **fuori dal repo**: `xprop -spy -root _NET_DESKTOP_LAYOUT` con
-timestamp in un file, uso normale del desktop fino alla comparsa del difetto, poi correlazione
-con i log delle applicazioni. Se alla comparsa la proprietà è ancora `0, 4, 3, 0` → caso D
-(stato latched); se è sparita o è `0, 12, 1, 0` → caso A/B e si risale al client. Con il fix
-attuale il difetto non si presenta più con `<layout>` configurato, ma la diagnosi serve per
-capire chi scriveva la proprietà nel setup originale.
+Consegnata **fuori dal repo** il 2026-11-05 in `~/Openbox-Desktop-Layout-Test.md`: monitor
+`xprop -spy` con timestamp (script `watch-layout.sh`/`stop-watch.sh`), marker manuali, trigger
+deliberati (pannello, obconf, xrandr, cambio conteggio, sospensione), tabella di lettura del
+log, bisezione dei componenti e verifica del fix. Se alla comparsa della perdita la proprietà è
+ancora `0, 4, 3, 0` → caso D (stato latched); se è sparita o è `0, 12, 1, 0` → caso A/B e si
+risale al client. Con il fix attuale il difetto non si presenta più con `<layout>` configurato,
+ma la diagnosi serve per capire chi scriveva la proprietà nel setup originale.
+
+Verifiche fatte prima di consegnarla: `xprop -spy` non segue atomi creati dopo l'avvio (lo
+script si rifiuta di partire se la proprietà manca), registra anche riscritture con lo stesso
+valore, mostra le cancellazioni come `not found`; avvio con `setsid` e arresto con
+`kill -- -PGID` senza processi residui; script validati con `sh -n` e `shellcheck`.
 
 ---
 
@@ -347,3 +353,5 @@ capire chi scriveva la proprietà nel setup originale.
 - 2026-11-05: implementazione completata; unit test e matrice d'integrazione verdi; Valgrind
   pulito sul codice nuovo. Resta aperto il solo rischio obconf (§9.1) e la diagnosi in campo
   del trigger originale (§8.3).
+- 2026-11-05: consegnata la procedura di campo `~/Openbox-Desktop-Layout-Test.md` (fuori dal
+  repo), con script di monitoraggio provati.
