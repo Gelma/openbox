@@ -1,0 +1,86 @@
+[GelmaRulla] Ho letto Gelma/CosaVoglio.txt, SpecAI.md, il codice e la storia git, e ho verificato tutto a runtime con un Xvfb privato, leggendo lo stato interno di Openbox via gdb (x/4dw &screen_desktop_layout). Aggiornato SpecAI.md (symlink a Gelma/SpecAI.md) e committato: 7b40c0fc.
+
+Valutazione dell'analisi precedente
+
+Confermato con evidenza sperimentale (Xvfb :101, 12 desktop):
+
+
+┌──────┬─────────────────────────────────────────┬───────────────────────────────────────────┐
+│ Caso │ Azione                                  │ Layout interno (orient. corner rows cols) │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L0   │ proprietà [0,4,3,0] all'avvio           │ 0 0 3 4 ✔                                │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L1   │ xprop -root -remove _NET_DESKTOP_LAYOUT │ 0 0 1 12 ← collasso                       │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L2   │ riscrittura [0,4,3,0]                   │ 0 0 3 4 ← recupero via PropertyNotify     │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L3   │ riscrittura [0,12,1,0] (come un pager)  │ 0 0 1 12 ← sintomo identico               │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L4   │ proprietà a 3 elementi                  │ 0 0 3 4 ✔                                │
+├──────┼─────────────────────────────────────────┼───────────────────────────────────────────┤
+│ L5   │ proprietà a 2 elementi / formato errato │ 0 0 1 12, silenzioso                      │
+└──────┴─────────────────────────────────────────┴───────────────────────────────────────────┘
+
+
+Quindi sì: il reset incondizionato a 1×N in cima a screen_update_layout() (screen.c:1146-1150) e la reazione a qualunque PropertyNotify, inclusa la cancellazione (event.c:812), sono la causa diretta. Confermato anche che Openbox non scrive mai la proprietà (dopo l'avvio xprop mostra ancora il valore dello script) e che parse_desktops() conosce solo number/firstdesk/names/popupTime.
+
+Correzione importante: l'affermazione «il restart riesegue l'autostart e quindi lo script Python» è falsa. Ho verificato che --startup viene rimosso da argv in parse_args() (openbox.c:635-650) e il marker dell'autostart è rimasto a una sola esecuzione dopo openbox --restart (il processo si ri-esegue con lo stesso PID). Il restart riallinea solo perché rilegge la proprietà: se fosse davvero cancellata, resterebbe 1×12. Ne seguono due scenari compatibili con l'osservazione «basta un restart»: (a) la proprietà è ancora valida e lo stato interno era rimasto “latched” a 1×12 per una lettura fallita in un istante precedente; (b) il suo “restart” è in realtà un riavvio di sessione/openbox-session, che rilancia l'autostart. Vanno discriminati in campo (§ sotto).
+
+Carenze dell'analisi precedente: non considera (1) il caso L5 (proprietà malformata/formato errato/0 elementi → stesso collasso, senza log), (2) che un pager che scrive un layout valido diverso vince (L3), (3) il leak di data (g_malloc in get_all()) su tutti i return di screen_update_layout(), (4) l'incoerenza al cambio conteggio desktop (AddDesktop/RemoveDesktop/_NET_NUMBER_OF_DESKTOPS: la proprietà non viene mai aggiornata), (5) la totale assenza di diagnostica nei fallback.
+
+La mia analisi: perché si perde la griglia
+
+Lo stato interno può diventare 1×N solo passando da screen_update_layout(), quindi serve una lettura fallita in quel momento. Cause:
+
+- A. proprietà cancellata (pannello/pager che esce, tool che ripulisce la root) → l'evento di delete stesso scatena il 
+collasso (L1);
+- B. proprietà sostituita da un valore valido ma diverso (pager 12×1) → vince il pager (L3);
+- C. proprietà malformata / tipo o `format` sbagliato / vuota → fallback 1×N senza una riga di log (L5);
+- D. stato “latched”: dopo A o C nessun evento arriva più; anche se la proprietà tornasse valida senza notifica, lo stato 
+resta 1×12 → serve una rilettura esplicita (restart/reconfigure). È l'unica spiegazione coerente con «il restart risolve»;
+- E. cambio del numero di desktop: ricalcolo da una proprietà mai aggiornata dal WM.
+
+
+Punto centrale: Openbox non ha memoria della geometria voluta. L'unica fonte è una proprietà esterna che chiunque può cancellare o riscrivere, e il fallback è una costante compilata (rows=1, columns=N).
+
+Modus operandi proposto
+
+1. La configurazione diventa l'autorità di default: 
+<desktops><layout><orientation/><columns>4</columns><rows>3</rows><startingCorner/></layout></desktops>. Se il tag c'è, il WM pubblica e difende la proprietà; se manca, resta il comportamento attuale (nessuna regressione, EWMH rispettata).
+2. Mai distruggere uno stato valido: screen_update_layout() legge la proprietà in una copia; se manca o è invalida conserva 
+il layout corrente (se ancora valido per screen_num_desktops), poi la configurazione, poi il fallback 1×N. Questo da solo elimina A e C.
+3. Pubblicazione con ownership e guardia anti-loop: XChangeProperty solo se il valore presente differisce (confronto prima 
+della scrittura), così il proprio PropertyNotify non genera un ping-pong; ripristino automatico su delete/property malformata.
+4. Log dei fallback (ob_debug): senza questo in campo non si distingue A da C.
+5. Cambio conteggio desktop: rivalidare la geometria e ripubblicarla.
+
+Piano a fasi: F1 hardening senza config (niente reset distruttivo + g_free + log) → già risolve la maggior parte dei casi; F2 tag <layout> in config.c, rc.xsd, rc.xml, docs; F3 pubblicazione/ownership; F4 test (unit test della funzione pura di risoluzione + matrice Xvfb L0–L5, restart, reconfigure, cambio conteggio).
+
+Per chiudere la diagnosi sul campo: serve un xprop -spy -root _NET_DESKTOP_LAYOUT con timestamp (nulla di installabile: xdotool non c'è, e qui non ci sono pannelli/pager installati; /tmp/testnec è una home Debian di esempio, il log contiene solo il menu mancante, e il display :0 vivo ha 7 desktop senza proprietà — quindi non riproducibile qui). Se alla comparsa del difetto la proprietà è ancora 0,4,3,0 → caso D; se è sparita o è 0,12,1,0 → caso A/B e si risale al client.
+
+Prima di scrivere codice mi serve la sua decisione su due punti:
+
+
+▸ Precedenza  Scope Submit
+
+Quale policy di precedenza vuole come default quando in rc.xml è dichiarata una griglia?
+
+❯ 1. Config vince sempre (Recommended)
+Se <layout> è in rc.xml, Openbox riasserisce la sua geometria anche se un pager ne scrive un'altra: elimina il sintomo per definizione. Attributo opzionale respectPager="yes" per chi vuole l'EWMH puro.
+  2. Pager vince, config solo fallback
+La proprietà resta la fonte primaria (EWMH stretto); la configurazione interviene solo quando la proprietà manca o è invalida. Più fedele alla specifica, ma il caso B (pager 12x1) resta possibile.
+  3. Sempre pager vince
+Nessuna riasserzione: solo retention dello stato e fallback da configurazione. Risolve A/C/D ma non B.
+  4. Type something...
+
+Fino a dove procedo con l'implementazione?
+
+❯ 1. Tutte le fasi F1-F4 (Recommended)
+Hardening + tag <layout> + pubblicazione/ownership + test. Patch completa con build, test Xvfb e Valgrind.
+  2. Solo F1 (hardening)
+  Patch piccola e a basso rischio: niente reset distruttivo quando la proprietà manca/è invalida, free del buffer, log. Risolve A/C/D senza toccare la configurazione.
+    3. F1+F2 (hardening + config)
+	Aggiunge il tag <layout> e il fallback da configurazione, ma senza pubblicare la proprietà: la griglia resta stabile nel WM, i pannelli dipendono ancora dallo script.
+	  4. Nessuna, solo analisi
+	  Mi fermo qui: resta solo il documento aggiornato e committato.
+	    5. Type something...
