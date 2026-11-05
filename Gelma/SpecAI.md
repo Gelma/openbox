@@ -1,175 +1,361 @@
-# SpecAI - Openbox Analysis & Desktop Grid Layout Specification
+# SpecAI — Openbox: layout della griglia di desktop virtuali
 
-## 1. Project Overview & Architectural Structure
-
-Openbox is a highly configurable, standards-compliant, lightweight stacking window manager for the X Window System (X11).
-
-### 1.1 Source Tree Layout
-
-- **`openbox/`** - Core Window Manager logic:
-  - `screen.c`, `screen.h`: Virtual desktop handling, monitor management, XRandR handling, desktop layout geometry, strut/usable area calculations.
-  - `config.c`, `config.h`: Parsing configuration settings from `rc.xml`.
-  - `event.c`, `event.h`: Central X11 event dispatcher (handling `PropertyNotify`, `ConfigureNotify`, `ClientMessage`, etc.).
-  - `client.c`, `client.h`: Client window lifecycle, frame management, state, transients, layer stacking.
-  - `actions/`: Built-in action implementations (desktop navigation, window movement, cycling, exec, etc.).
-  - `popup.c`, `popup.h`: Desktop pager popup and Alt-Tab switching popup.
-  - `session.c`, `session.h`: XSMP (X Session Management Protocol) state save/restore.
-  - `openbox.c`, `openbox.h`: Entry point, initialization lifecycle, main loop, signal handling.
-  - `focus.c`, `place.c`, `resist.c`, `stacking.c`, `menu.c`, `keyboard.c`, `mouse.c`: Specific WM subsystems.
-- **`obrender/`** - Theme rendering engine:
-  - Appearance, colors, font rendering via Xft/Pango, pixmap masks, gradient generation.
-- **`obt/`** - Openbox Toolkit:
-  - Low-level X11 connection wrappers (`xconnection.c`, `display.c`), X atom caching (`prop.c`), XML parsing abstraction over `libxml2` (`xml.c`), keyboard/ddx mappings.
-- **`data/`** - Default configuration and schema definitions:
-  - `rc.xml`, `rc.xsd`: Default user configuration template and XML schema.
-  - `menu.xml`, `menu.xsd`: Root and window menu definitions.
-  - `autostart/`: System and user session autostart scripts.
-- **`tools/`** - Utilities:
-  - `obxprop`, `openbox-xdg-autostart`, `gnome-panel-control`.
-- **Build System**:
-  - GNU Autotools (`bootstrap`, `configure.ac`, `Makefile.am`).
+> Documento di memoria di progetto. Va letto all'inizio di ogni sessione: contiene stato,
+> scoperte verificate, decisioni e il piano di lavoro.
+>
+> Stato al 2026-11-05 (branch `gelma`, base upstream `main` @ `3a2fbc65`, serie 3.7):
+> **analisi completata e verificata a runtime; design proposto; implementazione NON iniziata.**
+> L'unica modifica di codice in questo repository è, finora, questo documento.
 
 ---
 
-## 2. Deep Dive: Virtual Desktop Layout Mechanics
+## 1. Contesto e sintomo
 
-### 2.1 EWMH Specification & `_NET_DESKTOP_LAYOUT`
+Setup d'uso (home di riferimento copiata in `/tmp/testnec/.config/openbox`):
 
-Under the Extended Window Manager Hints (EWMH) specification:
-- Property name: `_NET_DESKTOP_LAYOUT, CARDINAL[4]/32` on the X11 Root Window.
-- Fields:
-  1. `orientation`: `0` (`_NET_WM_ORIENTATION_HORZ`) or `1` (`_NET_WM_ORIENTATION_VERT`).
-  2. `columns`: Number of columns in the desktop grid.
-  3. `rows`: Number of rows in the desktop grid.
-  4. `starting_corner`: `0` (Top-Left), `1` (Top-Right), `2` (Bottom-Right), `3` (Bottom-Left).
-- Intended usage: EWMH specifies that pagers set this property to inform the window manager how virtual desktops are arranged. If no pager sets it, the window manager provides a default layout.
+- `rc.xml`: `<desktops><number>12</number></desktops>` e keybind `W-F1..F12`, `W-C-d`.
+- `autostart` lancia `set_desktop_layout.py 4 3 &`, che scrive sulla root window la proprietà
+  EWMH `_NET_DESKTOP_LAYOUT = [0, 4, 3, 0]` (HORZ, 4 colonne, 3 righe, angolo top-left).
+- Openbox non ha alcun supporto di configurazione per righe/colonne: legge solo la proprietà.
 
-### 2.2 Openbox In-Memory Representation
+Sintomo riportato: durante l'uso la griglia 4×3 collassa in un'unica striscia 1 riga × 12
+colonne; la navigazione verticale e il popup dei desktop diventano una fila; un riavvio di
+Openbox ripristina la griglia.
 
-In `openbox/screen.h`:
+---
+
+## 2. Mappa del codice rilevante
+
+| File | Punto | Ruolo |
+|------|-------|-------|
+| `openbox/screen.c` | `64` | `ObDesktopLayout screen_desktop_layout` (unica copia in memoria) |
+| `openbox/screen.c` | `1146-1195` | `screen_update_layout()`: reset incondizionato + lettura proprietà |
+| `openbox/screen.c` | `1101-1139` | `screen_validate_layout()`: adatta righe/colonne a `screen_num_desktops` |
+| `openbox/screen.c` | `826-930` | `get_row_col()`, `translate_row_col()`: matematica della griglia |
+| `openbox/screen.c` | `992-1100` | `screen_find_desktop()`: navigazione direzionale (N/S/E/W) |
+| `openbox/screen.c` | `507-530` | `screen_set_num_desktops()` → chiama `screen_update_layout()` |
+| `openbox/screen.c` | `335-445` | `screen_startup()`: sessione XSMP, conteggio desktop, poi layout |
+| `openbox/screen.c` | `947-985` | `screen_show_desktop_popup()`: dimensione icone dal layout |
+| `openbox/event.c` | `808-815` | `PropertyNotify` su `_NET_DESKTOP_LAYOUT` → `screen_update_layout()` |
+| `openbox/popup.c` | `400-470` | disegno del pager popup con `columns`/`rows` |
+| `openbox/config.c` | `806-842` | `parse_desktops()`: solo `number`, `firstdesk`, `names`, `popupTime` |
+| `openbox/config.c` | `1141-1146` | default: `config_desktops_num = 4`, `popupTime = 875` |
+| `data/rc.xml` | `122-142` | sezione `<desktops>` documentata |
+| `data/rc.xsd` | `109-125` | schema `ob:desktops` |
+| `obt/prop.c` | `174-179` | `NET_WM_ORIENTATION_*` = 0/1 e `NET_WM_TOP*` = 0..3 (**valori numerici, non atomi internati**) |
+| `obt/prop.c` | `251-289` | `get_all()`: `g_malloc` del buffer; richiede `format == 32` e `ret_items > 0` |
+| `openbox/screen.c` | `230` | `_NET_DESKTOP_LAYOUT` è in `_NET_SUPPORTED` (ma solo **letto**) |
+| `openbox/openbox.c` | `330-370` | `--startup` eseguito solo al primo avvio, non su `--restart` |
+| `openbox/openbox.c` | `635-650` | `--startup` viene **rimosso** da `argv` (quindi non sopravvive al re-exec) |
+
+Conseguenza importante: **Openbox non scrive mai `_NET_DESKTOP_LAYOUT`**; l'unica fonte è un
+client esterno (pager/pannello/script). Non esiste alcun tag di configurazione per la geometria.
+
+---
+
+## 3. Comportamento verificato a runtime
+
+Harness: `Xvfb :101 -screen 0 1280x800x24 -nolisten tcp -noreset`, binario in-tree
+(`openbox/openbox` wrapper libtool), `rc.xml` con 12 desktop, stato interno letto con
+`gdb -p PID -ex 'x/4dw &screen_desktop_layout'` (ordine: orientation, start_corner, rows,
+columns; `HORZ=0`, `TOPLEFT=0`).
+
+| Caso | Azione | Layout risultante | Esito |
+|------|--------|-------------------|-------|
+| L0 | proprietà `[0,4,3,0]`, avvio | `0 0 3 4` | corretto |
+| — | dopo l'avvio | proprietà invariata | Openbox **non scrive** la proprietà |
+| L1 | `xprop -root -remove _NET_DESKTOP_LAYOUT` | `0 0 1 12` | **collasso riprodotto** |
+| L2 | riscrittura `[0,4,3,0]` | `0 0 3 4` | recupero automatico via `PropertyNotify` |
+| L3 | riscrittura `[0,12,1,0]` (come farebbe un pager) | `0 0 1 12` | il pager vince, sintomo identico |
+| L4 | proprietà a 3 elementi `[0,4,3]` | `0 0 3 4` | gestita (start corner = top-left) |
+| L5 | proprietà a 2 elementi (malformata) | `0 0 1 12` | **collasso, silenzioso** |
+
+Altre verifiche:
+
+- `openbox --reconfigure` rilegge la proprietà: se è assente/malformata, **ricollassa** a 1×12.
+- `openbox --restart` **non** riesegue `--startup` (marker su file rimasto a 1 esecuzione):
+  il processo si ri-esegue con lo stesso PID e gli argomenti residui, quindi l'autostart
+  (e lo script Python) **non** viene rilanciato.
+- Un server X fresco (senza `-noreset`) cancella atomi e proprietà quando l'ultimo client si
+  disconnette: nei test va sempre usato `-noreset`, altrimenti si osservano falsi negativi.
+- La proprietà vuota o con `format != 32` viene rifiutata da `get_all()` → stesso fallback 1×12.
+
+---
+
+## 4. Valutazione dell'analisi precedente
+
+**Confermato (con evidenza):**
+
+1. `screen_update_layout()` azzera lo stato a `1 × N` **prima** di leggere la proprietà: è la
+   causa diretta del collasso quando la lettura fallisce (L1, L5).
+2. `event.c` reagisce a qualunque `PropertyNotify` sull'atomo, inclusa la cancellazione, senza
+   distinguere `PropertyDelete` da un nuovo valore.
+3. Openbox è consumatore passivo: nessuna scrittura della proprietà, nessun tag in
+   `rc.xml`/`rc.xsd`, `parse_desktops()` limitato ai quattro tag noti.
+4. Dopo un collasso non esiste alcun meccanismo di rilettura periodica: serve un nuovo evento
+   (o un riavvio del WM) per riallineare lo stato.
+5. La storia git è coerente: `a055fd9e` introduce la validazione e il fallback 1×N; `6f6ab8c4`
+   salva/ripristina il layout **solo** via XSMP; `ead75d7f` aggiunge la rilettura post-reconfigure.
+
+**Impreciso / da correggere:**
+
+1. **"Il restart riesegue l'autostart e quindi lo script"**: falso per `openbox --restart`
+   (verificato: `--startup` è rimosso da `argv` e non viene rilanciato). Quindi la spiegazione
+   del "il restart risolve" non può essere quella. Le spiegazioni compatibili sono due:
+   (a) la proprietà è ancora presente e valida, e lo stato interno era rimasto "latched" a 1×12
+   per una lettura fallita in un istante precedente; (b) il "restart" dell'utente è in realtà un
+   riavvio di sessione/`openbox-session`, che rilancia l'autostart. Va discriminato in campo
+   (§8, `xprop -spy`).
+2. La citazione EWMH ("la proprietà è del Pager, non del WM") è corretta come intento della
+   specifica, ma non vieta al WM di scriverla; il progetto deve comunque dichiarare una policy
+   esplicita di precedenza (§6.1).
+3. Non è vero che serva un "pager esterno perché il layout funzioni": il popup e la navigazione
+   usano solo lo stato interno, che è alimentato anche da uno script (come in questo setup).
+
+**Mancante nell'analisi precedente:**
+
+1. Il caso **L5** (proprietà malformata, `format` errato, 0 elementi) produce lo stesso collasso
+   in modo silenzioso: non c'è alcun log, quindi la diagnosi in campo è impossibile.
+2. **Perdita di memoria**: nei percorsi `return` di `screen_update_layout()` il buffer `data`
+   (allocato con `g_malloc` in `get_all()`) non viene liberato.
+3. La **precedenza**: un pager che scrive un layout valido diverso (es. 12×1) vince sul layout
+   dell'utente — è un caso reale di collasso "legittimo" (L3), non solo un guasto.
+4. Il comportamento al **cambio del numero di desktop** (`AddDesktop`/`RemoveDesktop`,
+   `_NET_NUMBER_OF_DESKTOPS`): il layout viene ricalcolato dalla proprietà o dal fallback, ma la
+   proprietà non viene mai aggiornata, quindi resta incoerente con il nuovo conteggio.
+5. La necessità di **diagnostica** (`ob_debug`) per distinguere "proprietà assente" da
+   "proprietà invalida" in produzione.
+
+---
+
+## 5. Modello di guasto
+
+Lo stato interno può diventare 1×N solo passando da `screen_update_layout()`; quindi il collasso
+richiede **una lettura fallita** in quel momento. Le cause possibili, tutte verificate o
+verificabili:
+
+- **A. Proprietà cancellata** (pannello/pager che esce, `xprop -remove`, tool che ripulisce la
+  root). L'evento di cancellazione stesso scatena il ricalcolo → 1×12 (L1).
+- **B. Proprietà sostituita** da un valore valido ma diverso (pager con 12 desktop su una riga).
+  Nessun guasto del WM: vince il pager (L3).
+- **C. Proprietà malformata / tipo o formato sbagliato / 0 elementi**: `get_all()` fallisce o il
+  parsing fa `return` → 1×12 senza log (L5).
+- **D. Stato "latched"**: dopo A o C, se nessuno riscrive la proprietà non arriva più alcun
+  evento; lo stato resta 1×12 anche se la proprietà tornasse valida senza notifica (es. scritta
+  mentre il WM non era in ascolto). Serve una rilettura esplicita (restart/reconfigure) per
+  riallineare — coerente con l'osservazione "il restart risolve".
+- **E. Cambio conteggio desktop**: ricalcolo su proprietà non aggiornata (nessuna scrittura lato
+  WM) → griglia incoerente con `screen_num_desktops`.
+
+Punto chiave di progetto: **Openbox non ha memoria della geometria voluta**. Tutto dipende da una
+proprietà esterna che chiunque può cancellare o riscrivere, e il fallback è una costante compilata.
+
+---
+
+## 6. Modus operandi proposto
+
+### 6.1 Principi
+
+1. **La configurazione è l'autorità di default.** Se `rc.xml` dichiara una geometria, quella
+   vince: è l'unico modo per garantire una griglia stabile contro attori esterni. La proprietà
+   EWMH diventa un *hint* che il WM pubblica e difende, non l'unica fonte di verità.
+2. **Non distruggere mai uno stato valido.** Se la proprietà manca o è invalida, si conserva il
+   layout corrente (se ancora valido per il numero di desktop), poi la configurazione, poi il
+   fallback 1×N.
+3. **Nessun conflitto infinito.** Il WM riscrive la proprietà solo quando il valore presente
+   differisce da quello voluto; confronto prima della scrittura, così il proprio
+   `PropertyNotify` non genera un loop.
+4. **Diagnostica sempre.** Ogni fallback va loggato con `ob_debug` (assente / invalida /
+   conteggio cambiato), così il problema è ricostruibile dai log.
+5. **EWMH rispettata quando non c'è configurazione.** Senza `<layout>` in `rc.xml` il
+   comportamento resta quello attuale (pager proprietario, fallback 1×N): nessuna regressione
+   per chi non usa la funzione.
+
+### 6.2 Modello dati
+
+In `openbox/config.h` / `config.c`:
+
 ```c
-typedef struct ObDesktopLayout {
-    ObOrientation orientation;
-    ObCorner start_corner;
-    guint rows;
-    guint columns;
+typedef struct ObDesktopLayout {     /* già esistente in screen.h */
+    ObOrientation orientation;       /* OB_ORIENTATION_HORZ | VERT   */
+    ObCorner      start_corner;      /* OB_CORNER_*                 */
+    guint         rows;              /* 0 = automatico              */
+    guint         columns;           /* 0 = automatico              */
 } ObDesktopLayout;
 
-extern ObDesktopLayout screen_desktop_layout;
+extern ObDesktopLayout config_desktops_layout;  /* NEW */
+extern gboolean        config_desktops_layout_set; /* NEW: tag presenti */
 ```
 
-In `openbox/screen.c`:
-- `screen_desktop_layout` stores the active grid dimensions.
-- Directional navigation (`GoToDesktop` actions with directions `North`, `South`, `East`, `West`), wrap-around math, and the desktop switch pager popup (`openbox/popup.c`) rely directly on `screen_desktop_layout.columns` and `screen_desktop_layout.rows`.
+- Default: struttura a zero e `layout_set = FALSE` → comportamento legacy.
+- Parsing tollerante: `<rows>`, `<columns>`, `<orientation>horizontal|vertical`,
+  `<startingCorner>top-left|top-right|bottom-left|bottom-right`.
+- Validazione contro `<number>`: se `rows*columns < number` si espande con
+  `screen_validate_layout()`; se uno dei due è 0 resta automatico (come oggi).
 
----
+### 6.3 Algoritmo `screen_update_layout()` (pseudo)
 
-## 3. Analysis of the Issue: 4x3 Grid Reverting to 1x12 Strip
+```c
+void screen_update_layout(void)
+{
+    ObDesktopLayout prop, cfg = config_desktops_layout;
+    gboolean has_prop = read_layout_property(&prop);   /* libera sempre il buffer */
 
-### 3.1 Problem Description
+    if (has_prop && screen_validate_layout(&prop)) {
+        if (config_desktops_layout_set && !layout_equal(&prop, &cfg)) {
+            /* configurazione esplicita: il WM ha l'autorità */
+            apply_layout(&cfg);          /* valida contro screen_num_desktops */
+            publish_layout(&cfg);        /* XChangeProperty, solo se diversa */
+        } else {
+            apply_layout(&prop);         /* pager/EWMH */
+        }
+        return;
+    }
 
-In user configurations such as `/tmp/testnec/.config/openbox`, a 12-desktop setup is configured:
-- `rc.xml` sets `<number>12</number>`.
-- `autostart` invokes `set_desktop_layout.py 4 3 &` to write `_NET_DESKTOP_LAYOUT = [0, 4, 3, 0]` on the root window.
-- During normal usage, the grid reverts from 4x3 to a single horizontal strip of 12 columns (1 row x 12 columns).
-- When this happens:
-  - Up/Down desktop navigation fails or wraps onto the same desktop.
-  - The desktop switch popup shows a single long line of 12 rectangles instead of a 4x3 grid.
-  - `openbox --restart` temporarily restores the layout if `autostart` or session reloads.
+    /* proprietà assente o invalida */
+    ob_debug("desktop layout: %s, fallback", has_prop ? "invalid" : "missing");
 
-### 3.2 Root Cause in Openbox Code
+    if (layout_valid_for(&screen_desktop_layout, screen_num_desktops)) {
+        /* conserva lo stato corrente: nessun collasso */
+        publish_layout(&screen_desktop_layout);
+        return;
+    }
+    if (config_desktops_layout_set) {
+        apply_layout(&cfg);
+        publish_layout(&cfg);
+        return;
+    }
+    screen_desktop_layout = (ObDesktopLayout){ OB_ORIENTATION_HORZ,
+                                               OB_CORNER_TOPLEFT,
+                                               1, screen_num_desktops };
+}
+```
 
-Inspecting `openbox/screen.c` and `openbox/event.c`:
+Dettagli:
 
-1. **Unconditional Destructive Reset in `screen_update_layout()`**:
-   ```c
-   void screen_update_layout(void)
-   {
-       ObDesktopLayout l;
-       guint32 *data;
-       guint num;
+- `layout_valid_for()` = `screen_validate_layout()` su una copia, senza mutare lo stato.
+- `apply_layout()` valida sempre contro `screen_num_desktops` (anche dopo
+  `AddDesktop`/`RemoveDesktop`).
+- `publish_layout()` scrive `[orientation, columns, rows, start_corner]` come `CARDINAL[4]`
+  solo se il valore presente è diverso (guardia anti-loop) e imposta `layout_published = TRUE`.
+- Il layout di sessione XSMP, se presente, mantiene la precedenza attuale (è una scelta esplicita
+  salvata nella sessione).
 
-       screen_desktop_layout.orientation = OB_ORIENTATION_HORZ;
-       screen_desktop_layout.start_corner = OB_CORNER_TOPLEFT;
-       screen_desktop_layout.rows = 1;
-       screen_desktop_layout.columns = screen_num_desktops;
+### 6.4 Pubblicazione e ownership
 
-       if (OBT_PROP_GETA32(obt_root(ob_screen),
-                           NET_DESKTOP_LAYOUT, CARDINAL, &data, &num)) {
-           // parse and validate layout...
-       }
-   }
-   ```
-   At the very start of `screen_update_layout()`, Openbox forcibly sets `rows = 1` and `columns = screen_num_desktops`.
-   If reading `_NET_DESKTOP_LAYOUT` fails (because it was deleted, cleared, or unavailable), Openbox leaves `rows = 1` and `columns = screen_num_desktops`.
+- All'avvio, se `config_desktops_layout_set`, il WM scrive la proprietà: i pannelli/pager vedono
+  subito la griglia giusta e non serve più alcuno script in `autostart`.
+- Su `PropertyNotify`:
+  - valore valido uguale → nulla da fare;
+  - valore valido diverso con configurazione esplicita → il WM riasserisce la configurazione e
+    logga (policy "config wins", default);
+  - valore assente/malformato → ripristina (stato corrente valido o configurazione) e ripubblica.
+- Policy alternativa per chi vuole l'EWMH puro: attributo `<layout respectPager="yes">` che fa
+  vincere il pager. Non necessario per il caso d'uso, utile per non imporre un comportamento.
 
-2. **Triggering Events**:
-   `screen_update_layout()` is invoked in several scenarios:
-   - **`openbox/event.c:812` (`PropertyNotify`)**:
-     Whenever `_NET_DESKTOP_LAYOUT` changes on the root window. Note that X11 sends `PropertyNotify` with `state == PropertyDelete` when an external application removes the property. Openbox does not check `state` and calls `screen_update_layout()`, finding the property gone and reverting to 1x12.
-   - **`openbox/screen.c:351` (`screen_startup(reconfig=TRUE)`)**:
-     Triggered by `openbox --reconfigure`. If the root property was wiped, reconfigure reverts the layout to 1x12.
-   - **`openbox/screen.c:525` (`screen_set_num_desktops`)**:
-     Triggered dynamically if desktop count changes.
-   - **Panel / Dock / Pager Lifecycle**:
-     External pagers/panels (tint2, lxpanel, polybar, xfce4-panel) often delete or overwrite `_NET_DESKTOP_LAYOUT` during initialization, crash, or reload.
-   - **RandR / Display / Resolution changes**:
-     Screen configuration changes (e.g. `xrandr`, display hotplugging) trigger screen reconfiguration and can lead to property loss on the root window.
-   - **Race Conditions at Startup**:
-     `autostart` runs `set_desktop_layout.py 4 3 &` in the background. If a panel or background tool starts right after and clears root window properties or sets its own layout, the user script is overridden.
+### 6.5 Cambio del numero di desktop
 
-3. **Absence of Configuration in `rc.xml`**:
-   `openbox/config.c` only supports:
-   - `<number>`: desktop count
-   - `<firstdesk>`: initial desktop index
-   - `<names>`: desktop names
-   - `<popupTime>`: popup display duration
-   There is currently no XML configuration tag in `<desktops>` for `<rows>`, `<columns>`, or `<orientation>`.
+In `screen_set_num_desktops()` il ricalcolo usa lo stesso algoritmo; se la geometria
+configurata non copre più il conteggio viene adattata e **ripubblicata**, così la proprietà non
+resta incoerente. Con geometria automatica si conserva il comportamento attuale.
 
-### 3.3 Historical Git Log Insights
+### 6.6 Sintassi di configurazione proposta
 
-- **`a055fd9e57cc0715d491405c41494b5e155c795c`** ("validate the desktop layout loaded from session"):
-  Introduced `screen_validate_layout()` and layout validation logic. It made layout parsing safer against corrupted data, but codified the fallback to `rows = 1, columns = screen_num_desktops`.
-- **`6f6ab8c442b1626a1cd28868900a00fe4bf8cb08`** ("save and restore the desktop number/layout/names in the session"):
-  Added XSMP session support for `<desktoplayout>` (`orientation`, `startcorner`, `columns`, `rows`) saved to `~/.config/openbox/sessions/`. However, this mechanism only activates when running under an active XSMP session manager, which modern lightweight setups (like standalone Openbox) do not use.
-- **`ead75d7f9f3633bee90be932b8db9976e6ab13ca`** ("Sometimes after reconfigure we forget this, so check again"):
-  Mikael Magnusson added `screen_update_layout()` into `screen_startup(reconfig=TRUE)` precisely because layout state was lost or forgotten after reconfiguring Openbox.
-
----
-
-## 4. Proposed Solution Strategies
-
-### Strategy 1: Native Configuration Support in `rc.xml` (Recommended Architecture)
-- Extend `<desktops>` in `data/rc.xml` and `data/rc.xsd` to support:
-  ```xml
-  <desktops>
-    <number>12</number>
-    <rows>3</rows>
+```xml
+<desktops>
+  <number>12</number>
+  <firstdesk>1</firstdesk>
+  <layout>
+    <orientation>horizontal</orientation>  <!-- horizontal | vertical -->
     <columns>4</columns>
-    <orientation>horizontal</orientation> <!-- horizontal or vertical -->
-  </desktops>
-  ```
-- In `openbox/config.c`:
-  Parse `rows`, `columns`, and `orientation` into configuration globals (`config_desktops_rows`, `config_desktops_columns`, `config_desktops_orientation`).
-- In `openbox/screen.c`:
-  - When initializing or when `_NET_DESKTOP_LAYOUT` is not present, use the configured rows/columns instead of hardcoded `1 x N`.
-  - When `screen_update_layout()` is called, if the root window property is deleted or invalid, fall back to the configured grid instead of `rows = 1`.
-  - Set `_NET_DESKTOP_LAYOUT` onto the root window on startup/reconfigure if configured in `rc.xml`, ensuring pagers and panels also know the user's intended layout.
+    <rows>3</rows>
+    <startingCorner>top-left</startingCorner>
+  </layout>
+  <names>...</names>
+  <popupTime>875</popupTime>
+</desktops>
+```
 
-### Strategy 2: Defensive State Retention in `screen_update_layout()`
-- If `_NET_DESKTOP_LAYOUT` is deleted or absent:
-  - Do not blindly overwrite `screen_desktop_layout` with `1 x N` if `screen_desktop_layout` already holds a valid layout matching `screen_num_desktops`.
-  - Only update `screen_desktop_layout` if a valid property is provided, or if the number of desktops changed such that the old layout is invalid.
+Aggiornamenti necessari: `data/rc.xml` (esempio + commento), `data/rc.xsd`
+(`complexType name="desktopLayout"`, `xsd:all`), `doc/openbox.1.in` e documentazione rc se
+presente, `CHANGELOG` (voce in cima alla sezione 3.7).
 
-### Strategy 3: External Watchdog / Resilience Script
-- While developing or testing C-level changes, an external daemon or script can monitor root window `PropertyNotify` events and immediately re-apply `_NET_DESKTOP_LAYOUT` if it is removed or altered.
+### 6.7 Diagnostica
+
+Aggiungere un `ob_debug_type(OB_DEBUG_APP_BUGS, ...)` (o nuova categoria) in ogni punto di
+fallback, con: valore letto, esito della validazione, `screen_num_desktops`, layout applicato.
+Senza questo, in campo non è possibile distinguere A da C.
 
 ---
 
-## 5. Next Steps & Implementation Roadmap
+## 7. Piano di implementazione a fasi
 
-1. Verify build environment and compilation with Autotools (`./bootstrap`, `./configure`, `make`).
-2. Add `<rows>`, `<columns>`, and `<orientation>` support to `openbox/config.c`, `openbox/config.h`, and `data/rc.xsd`.
-3. Update `openbox/screen.c` to use configured defaults in `screen_startup()` and `screen_update_layout()`.
-4. Ensure Openbox sets and preserves `_NET_DESKTOP_LAYOUT` on the root window.
-5. Test against edge cases: reconfigure, panel restart, desktop additions/removals, and RandR screen changes.
+| Fase | Contenuto | File | Rischio |
+|------|-----------|------|---------|
+| **F1** | Hardening senza nuova configurazione: niente reset distruttivo se la proprietà manca/è invalida; `g_free(data)` su tutti i percorsi; log dei fallback | `openbox/screen.c` | basso, isolato |
+| **F2** | Configurazione `<layout>`: globals, parser, default, `rc.xsd`, `rc.xml`, docs | `config.c/h`, `data/rc.xsd`, `data/rc.xml`, `doc/openbox.1.in`, `CHANGELOG` | medio (compatibilità config) |
+| **F3** | Pubblicazione della proprietà + ownership + guardia anti-loop + ripubblicazione al cambio conteggio | `screen.c` (nuove helper statiche), `screen.h` se serve | medio: interazione con pager |
+| **F4** | Test: unit test della funzione pura di risoluzione (§6.3) + test d'integrazione Xvfb (matrice L0–L5 + restart/reconfigure/cambio conteggio) | `tests/` (nuovo harness) o `obt/obt_unittests` se si estrae la logica pura | basso |
+
+Ordine consigliato: F1 (risolve già il 90% dei collassi: A e C non distruggono più lo stato),
+poi F3/F2 (rendono il WM autosufficiente), quindi F4.
+
+Verifica obbligatoria per ogni fase: build completa (`make -j`), matrice Xvfb, `git diff` senza
+toccare file non correlati, `valgrind` sul percorso di `screen_update_layout` (il leak F1 è
+dimostrabile con `--leak-check`).
+
+---
+
+## 8. Riproduzione e test
+
+Harness usato (nessuna dipendenza extra, `xdotool` assente):
+
+```sh
+Xvfb :101 -screen 0 1280x800x24 -nolisten tcp -noreset &
+DISPLAY=:101 python3 set_desktop_layout.py 4 3
+DISPLAY=:101 ./openbox/openbox --config-file /tmp/ob-grid-test/rc.xml &
+gdb -p $! -batch -ex 'file ./openbox/.libs/openbox' -ex 'x/4dw &screen_desktop_layout'
+# collasso:      xprop -root -remove _NET_DESKTOP_LAYOUT
+# pager 12x1:    python3 set_desktop_layout.py 12 1
+# malformata:    XChangeProperty con 2 elementi / format 16
+```
+
+Casi da coprire nei test automatici: L0–L5, `--reconfigure`, `--restart`, cambio conteggio
+(12→13→12), proprietà con `format 16`, proprietà con 0 elementi, nessuna configurazione
+(comportamento legacy invariato).
+
+**Procedura per identificare il colpevole in campo** (da consegnare all'utente, fuori dal repo):
+avviare `xprop -spy -root _NET_DESKTOP_LAYOUT | while read ...` con timestamp in un file, usare il
+desktop finché si presenta il difetto, poi correlare l'ora con i log delle applicazioni avviate.
+Se alla comparsa del difetto la proprietà risulta ancora `0, 4, 3, 0`, il guasto è di tipo D
+(stato latched, nessun evento) e il restart riallinea; se la proprietà è sparita o è `0, 12, 1, 0`
+il guasto è A o B e si può risalire al client che l'ha scritta.
+
+---
+
+## 9. Rischi, compatibilità, domande aperte
+
+1. **Policy di precedenza** (decisione richiesta all'utente): configurazione che vince sempre
+   (default proposto) oppure pager che vince quando scrive un layout valido. La prima elimina il
+   sintomo per definizione; la seconda è più fedele a EWMH ma lascia il caso B.
+2. **obconf**: riscrive `rc.xml` quando si modificano le impostazioni. Va verificato che non
+   elimini il nuovo blocco `<layout>`; se lo elimina, valutare un file separato o una patch a
+   obconf (fuori scope).
+3. **Pannelli con layout proprio**: con "config wins" il pannello può mostrare una geometria
+   diversa da quella del WM; documentare e prevedere `respectPager` come valvola di sfogo.
+4. **XSMP**: il layout salvato in sessione deve continuare a prevalere; non toccare
+   `session.c` in F1/F2.
+5. **Multi-monitor / RandR**: il layout è globale; i test devono includere un `xrandr` a caldo
+   per escludere effetti collaterali su `screen_resize()` (che non chiama `screen_update_layout`).
+6. **Traduzioni**: eventuali nuove stringhe utente vanno in `po/` (le modifiche `po/*.po` già
+   presenti nel worktree sono di un'altra sessione: non vanno incluse nei commit di questo
+   lavoro).
+
+---
+
+## 10. Storico delle decisioni
+
+- 2026-11-05: analisi iniziale (commit `ca930ad6`), poi spostamento dei file (`4eb8307f`).
+- 2026-11-05: verifica runtime con Xvfb+gdb; correzione della diagnosi sul `--restart`;
+  individuati i casi L3/L5 e il leak; definito il piano a fasi F1–F4. Implementazione da
+  concordare.
