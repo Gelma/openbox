@@ -1,5 +1,9 @@
 3.7:
   * Update translations.
+  * Add a <layout> section to <desktops> in rc.xml to describe the virtual
+    desktop grid (rows, columns, orientation, starting corner).  Openbox now
+    publishes _NET_DESKTOP_LAYOUT itself and keeps the grid when the property
+    is deleted, malformed or overwritten, instead of collapsing to one row.
   * Fix ShapeInput shape mask propagation (clickthrough windows).
   * Add fullscreen, focusable conditions to If and ForEach actions.
   * Add <none> to ForEach, ran if there were no matches.

@@ -113,6 +113,7 @@
         <xsd:all>
             <xsd:element minOccurs="0" name="number" type="xsd:integer"/>
             <xsd:element minOccurs="0" name="firstdesk" type="xsd:integer"/>
+            <xsd:element minOccurs="0" name="layout" type="ob:desktopLayout"/>
             <xsd:element minOccurs="0" name="names">
                 <xsd:complexType>
                     <xsd:sequence>
@@ -122,6 +123,19 @@
             </xsd:element>
             <xsd:element minOccurs="0" name="popupTime" type="xsd:integer"/>
         </xsd:all>
+    </xsd:complexType>
+    <xsd:complexType name="desktopLayout">
+        <xsd:annotation>
+            <xsd:documentation>defines the grid of virtual desktops; a missing
+                rows or columns value is computed to hold all the desktops</xsd:documentation>
+        </xsd:annotation>
+        <xsd:all>
+            <xsd:element minOccurs="0" name="orientation" type="ob:orientation"/>
+            <xsd:element minOccurs="0" name="columns" type="xsd:integer"/>
+            <xsd:element minOccurs="0" name="rows" type="xsd:integer"/>
+            <xsd:element minOccurs="0" name="startingCorner" type="ob:startingcorner"/>
+        </xsd:all>
+        <xsd:attribute name="respectPager" type="ob:bool" use="optional"/>
     </xsd:complexType>
     <xsd:complexType name="resize">
         <xsd:all>
@@ -555,6 +569,20 @@
             <xsd:enumeration value="Always"/>
             <xsd:enumeration value="Never"/>
             <xsd:enumeration value="Nonpixel"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="orientation">
+        <xsd:restriction base="xsd:string">
+            <xsd:enumeration value="horizontal"/>
+            <xsd:enumeration value="vertical"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="startingcorner">
+        <xsd:restriction base="xsd:string">
+            <xsd:enumeration value="top-left"/>
+            <xsd:enumeration value="top-right"/>
+            <xsd:enumeration value="bottom-left"/>
+            <xsd:enumeration value="bottom-right"/>
         </xsd:restriction>
     </xsd:simpleType>
     <xsd:simpleType name="dialogtype">

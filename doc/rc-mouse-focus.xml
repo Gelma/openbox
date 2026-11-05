@@ -108,6 +108,19 @@
        and back in -->
   <number>4</number>
   <firstdesk>1</firstdesk>
+  <!-- optional: arrange the desktops in a grid.  Without this, the layout
+       advertised by a pager through the EWMH _NET_DESKTOP_LAYOUT property is
+       used, and a single row is the last resort.  With it, Openbox publishes
+       the grid itself and restores it if the property is lost or overwritten.
+       A missing rows or columns value is computed to hold all the desktops.
+       Set respectPager="yes" to let a pager override the grid.
+  <layout>
+    <orientation>horizontal</orientation>
+    <columns>4</columns>
+    <rows>3</rows>
+    <startingCorner>top-left</startingCorner>
+  </layout>
+  -->
   <names>
     <!-- set names up here if you want to, like this:
     <name>desktop 1</name>
