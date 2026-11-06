@@ -51,6 +51,11 @@ extern Time screen_desktop_user_time;
 
 extern ObDesktopLayout screen_desktop_layout;
 
+/*! HARD-CODED desktop grid: 4 columns x 3 rows, not configurable */
+#define SCREEN_FIXED_COLUMNS  4u
+#define SCREEN_FIXED_ROWS     3u
+#define SCREEN_FIXED_DESKTOPS (SCREEN_FIXED_COLUMNS * SCREEN_FIXED_ROWS)
+
 /*! An array of gchar*'s which are desktop names in UTF-8 format */
 extern gchar **screen_desktop_names;
 

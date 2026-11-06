@@ -881,8 +881,8 @@ static void parse_desktops(xmlNodePtr node, gpointer d)
 
     if ((n = obt_xml_find_node(node, "number"))) {
         gint d = obt_xml_node_int(n);
-        if (d > 0)
-            config_desktops_num = (unsigned) d;
+        /* HARD-CODED: <number> is ignored, the grid is fixed (screen.h) */
+        (void)d;
     }
     if ((n = obt_xml_find_node(node, "firstdesk"))) {
         gint d = obt_xml_node_int(n);
@@ -1208,7 +1208,7 @@ void config_startup(ObtXmlInst *i)
 
     obt_xml_register(i, "theme", parse_theme, NULL);
 
-    config_desktops_num = 4;
+    config_desktops_num = 12; /* HARD-CODED 4x3 grid, see screen.h */
     config_screen_firstdesk = 1;
     config_desktops_names = NULL;
     config_desktop_popup_time = 875;

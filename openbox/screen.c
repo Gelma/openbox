@@ -392,24 +392,9 @@ void screen_startup(gboolean reconfig)
        this will also set the default names from the config file up for
        desktops that don't have names yet */
     screen_num_desktops = 0;
-    if (OBT_PROP_GET32(obt_root(ob_screen),
-                       NET_NUMBER_OF_DESKTOPS, CARDINAL, &d))
-    {
-        if (d != config_desktops_num) {
-            /* TRANSLATORS: If you need to specify a different order of the
-               arguments, you can use %1$d for the first one and %2$d for the
-               second one. For example,
-               "The current session has %2$d desktops, but Openbox is configured for %1$d ..." */
-            g_warning(ngettext("Openbox is configured for %d desktop, but the current session has %d.  Overriding the Openbox configuration.", "Openbox is configured for %d desktops, but the current session has %d.  Overriding the Openbox configuration.", config_desktops_num),
-                      config_desktops_num, d);
-        }
-        screen_set_num_desktops(d);
-    }
-    /* restore from session if possible */
-    else if (session_num_desktops)
-        screen_set_num_desktops(session_num_desktops);
-    else
-        screen_set_num_desktops(config_desktops_num);
+    /* HARD-CODED: the desktop count is always SCREEN_FIXED_DESKTOPS,
+       whatever the root property, the session or rc.xml say */
+    screen_set_num_desktops(SCREEN_FIXED_DESKTOPS);
 
     screen_desktop = screen_num_desktops;  /* something invalid */
     /* start on the current desktop when a wm was already running */
@@ -435,13 +420,8 @@ void screen_startup(gboolean reconfig)
     OBT_PROP_SET32(obt_root(ob_screen),
                    NET_SHOWING_DESKTOP, CARDINAL, screen_showing_desktop());
 
-    if (session_desktop_layout_present &&
-        screen_validate_layout(&session_desktop_layout))
-    {
-        screen_desktop_layout = session_desktop_layout;
-    }
-    else
-        screen_update_layout();
+    /* HARD-CODED: the session layout is ignored, the grid is fixed */
+    screen_update_layout();
 }
 
 static void desktop_popup_free(guint n)
@@ -510,7 +490,18 @@ void screen_set_num_desktops(guint num)
 
     g_assert(num > 0);
 
-    if (screen_num_desktops == num) return;
+    /* HARD-CODED: the number of desktops can never change */
+    if (num != SCREEN_FIXED_DESKTOPS)
+        ob_debug("desktops: ignoring request for %u desktops, fixed at %u",
+                 num, SCREEN_FIXED_DESKTOPS);
+    num = SCREEN_FIXED_DESKTOPS;
+
+    if (screen_num_desktops == num) {
+        /* make sure the root property still reflects the fixed count */
+        OBT_PROP_SET32(obt_root(ob_screen), NET_NUMBER_OF_DESKTOPS,
+                       CARDINAL, num);
+        return;
+    }
 
     screen_num_desktops = num;
     OBT_PROP_SET32(obt_root(ob_screen), NET_NUMBER_OF_DESKTOPS, CARDINAL, num);
@@ -741,6 +732,9 @@ void screen_add_desktop(gboolean current)
 {
     gulong ignore_start;
 
+    /* HARD-CODED: the desktop grid is fixed, adding is not allowed */
+    if (screen_num_desktops >= SCREEN_FIXED_DESKTOPS) return;
+
     /* ignore enter events caused by this */
     ignore_start = event_start_ignore_all_enters();
 
@@ -773,6 +767,8 @@ void screen_remove_desktop(gboolean current)
     gulong ignore_start;
 
     if (screen_num_desktops <= 1) return;
+    /* HARD-CODED: the desktop grid is fixed, removing is not allowed */
+    if (screen_num_desktops <= SCREEN_FIXED_DESKTOPS) return;
 
     /* ignore enter events caused by this */
     ignore_start = event_start_ignore_all_enters();
@@ -1179,6 +1175,21 @@ static void screen_publish_layout(const ObDesktopLayout *l)
 }
 
 void screen_update_layout(void)
+{
+    /* HARD-CODED: the grid is always SCREEN_FIXED_COLUMNS x
+       SCREEN_FIXED_ROWS, horizontal, starting top-left.  rc.xml, the
+       session file and any _NET_DESKTOP_LAYOUT written by pagers are
+       ignored; the fixed grid is (re)published on the root window every
+       time someone touches the property. */
+    screen_desktop_layout.orientation = OB_ORIENTATION_HORZ;
+    screen_desktop_layout.start_corner = OB_CORNER_TOPLEFT;
+    screen_desktop_layout.columns = SCREEN_FIXED_COLUMNS;
+    screen_desktop_layout.rows = SCREEN_FIXED_ROWS;
+    screen_publish_layout(&screen_desktop_layout);
+}
+
+/* Former configurable resolver, kept for reference but no longer used. */
+G_GNUC_UNUSED static void screen_update_layout_configurable(void)
 {
     ObDesktopLayout prop, cur = screen_desktop_layout;
     gboolean have_prop, prop_ok, cfg_authoritative;
