@@ -92,6 +92,10 @@ static gpointer setup_func(xmlNodePtr node)
     o->u.abs.desktop = screen_desktop;
     /* wrap by default - it's handy! */
     o->u.rel.wrap = TRUE;
+    /* NOTE: u.abs.desktop and u.rel.linear share the same storage in the
+       union, so every RELATIVE branch below must reset u.rel.linear,
+       otherwise it inherits screen_desktop and, after a reconfigure done
+       while not on the first desktop, up/down turn into linear moves */
 
     if ((n = obt_xml_find_node(node, "to"))) {
         gchar *s = obt_xml_node_string(n);
@@ -112,21 +116,25 @@ static gpointer setup_func(xmlNodePtr node)
         else if (!g_ascii_strcasecmp(s, "north") ||
                  !g_ascii_strcasecmp(s, "up")) {
             o->type = RELATIVE;
+            o->u.rel.linear = FALSE;
             o->u.rel.dir = OB_DIRECTION_NORTH;
         }
         else if (!g_ascii_strcasecmp(s, "south") ||
                  !g_ascii_strcasecmp(s, "down")) {
             o->type = RELATIVE;
+            o->u.rel.linear = FALSE;
             o->u.rel.dir = OB_DIRECTION_SOUTH;
         }
         else if (!g_ascii_strcasecmp(s, "west") ||
                  !g_ascii_strcasecmp(s, "left")) {
             o->type = RELATIVE;
+            o->u.rel.linear = FALSE;
             o->u.rel.dir = OB_DIRECTION_WEST;
         }
         else if (!g_ascii_strcasecmp(s, "east") ||
                  !g_ascii_strcasecmp(s, "right")) {
             o->type = RELATIVE;
+            o->u.rel.linear = FALSE;
             o->u.rel.dir = OB_DIRECTION_EAST;
         }
         else {
