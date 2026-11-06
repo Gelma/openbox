@@ -376,3 +376,18 @@ horizontal, starting top-left. Constants `SCREEN_FIXED_COLUMNS`,
 - `screen_startup()` ignores the existing root property and session
   desktop count/layout.
 - rc.xml `<desktops><number>` and `<layout>` have no effect.
+
+## Navigation bug: up/down become horizontal after reconfigure (2026-11-06)
+
+Real cause of the weekly "down moves right, then only horizontal" symptom
+(grid still 4x3). In `openbox/actions/desktop.c` `setup_func()` the
+`Options.u` union overlaps `u.abs.desktop` with `u.rel.linear`. The setup
+first writes `u.abs.desktop = screen_desktop`, then for up/down/left/right
+switches to RELATIVE without resetting `u.rel.linear`. At first start
+`screen_desktop` is 0, so linear=FALSE. On any reconfigure (obconf,
+`openbox --reconfigure`, theme tools...) done while NOT on desktop 1, the
+keybindings are re-parsed and `linear` becomes non-zero: GoToDesktop
+up/down/left/right turn into linear previous/next moves.
+Fix: every RELATIVE branch resets `u.rel.linear = FALSE`.
+Regression test: `Gelma/openbox-layout-log/test_nav.sh` (Xvfb + XTEST,
+checks grid moves before/after disturbances and after `--reconfigure`).
