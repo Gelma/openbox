@@ -359,3 +359,20 @@ proprietà, log di valore iniziale/marker/12×1/cancellazione/4×3, stop senza `
   del trigger originale (§8.3).
 - 2026-11-05: consegnata la procedura di campo `~/Openbox-Desktop-Layout-Test.md` (fuori dal
   repo), con script di monitoraggio provati.
+
+## Hard-coded 4x3 desktop grid (2026-11-06)
+
+The desktop grid is now fixed in code: 4 columns x 3 rows (12 desktops),
+horizontal, starting top-left. Constants `SCREEN_FIXED_COLUMNS`,
+`SCREEN_FIXED_ROWS`, `SCREEN_FIXED_DESKTOPS` live in `openbox/screen.h`.
+
+- `screen_update_layout()` always sets the fixed grid and republishes
+  `_NET_DESKTOP_LAYOUT` whenever it is changed/deleted by anyone.
+  The previous configurable resolver is kept as the unused
+  `screen_update_layout_configurable()`.
+- `screen_set_num_desktops()` coerces any value to 12 (client messages,
+  session, root property are ignored).
+- `screen_add_desktop()` / `screen_remove_desktop()` are no-ops.
+- `screen_startup()` ignores the existing root property and session
+  desktop count/layout.
+- rc.xml `<desktops><number>` and `<layout>` have no effect.
